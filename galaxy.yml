@@ -1,0 +1,23 @@
+---
+namespace: exo
+name: apparmor
+version: 1.0.0
+readme: README.md
+
+authors:
+  - Enexis OT Team
+
+description: >-
+  Ansible collection providing AppArmor utilities and modules.
+  This collection contains custom modules for managing AppArmor profiles
+  in a modular and reusable way.
+
+tags:
+  - apparmor
+  - security
+  - linux
+  - system
+  - hardening
+
+dependencies: {}
+

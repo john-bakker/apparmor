@@ -29,9 +29,7 @@ platforms:
 provisioner:
   name: ansible
   env:
-    # ANSIBLE_COLLECTIONS_PATH must point to the directory containing ansible_collections/
-    # From molecule/default/ we need to go up 6 levels:
-    ANSIBLE_COLLECTIONS_PATH: ../../../../../../
+    ANSIBLE_COLLECTIONS_PATH: ../../../../../
   playbooks:
     converge: converge.yml
     prepare: prepare.yml

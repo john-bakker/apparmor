@@ -1,0 +1,113 @@
+---
+- name: Converge.
+  hosts: all
+  become: true
+  gather_facts: true
+  collections:
+    - exo.apparmor
+
+  vars:
+    # Disable staging cleanup for idempotence test
+    # Cleanup will be verified separately in verify.yml
+    apparmor_cleanup_staging: false
+
+  tasks:
+    # =========================================================================
+    # Test 1: Inline fragment WITHOUT wrapper
+    # =========================================================================
+    - name: Add nginx AppArmor fragment (inline, without wrapper).
+      exo.apparmor.apparmor_profile:
+        name: "usr.sbin.nginx"
+        fragment: |
+          #include <abstractions/base>
+          #include <abstractions/nameservice>
+
+          capability net_bind_service,
+          capability setgid,
+          capability setuid,
+
+          /usr/sbin/nginx mr,
+          /etc/nginx/** r,
+          /var/log/nginx/** w,
+          /var/cache/nginx/** w,
+        mode: enforce
+        role_name: "nginx_test"
+        state: present
+
+    - name: Add site-specific nginx fragment (inline, without wrapper).
+      exo.apparmor.apparmor_profile:
+        name: "usr.sbin.nginx"
+        fragment: |
+          # Site-specific additions
+          /var/www/html/** r,
+        mode: enforce
+        role_name: "nginx_site"
+        state: present
+
+    # =========================================================================
+    # Test 2: Inline fragment for complain mode
+    # =========================================================================
+    - name: Add OMI AppArmor fragment (inline, without wrapper, complain mode).
+      exo.apparmor.apparmor_profile:
+        name: "usr.sbin.omiagent"
+        fragment: |
+          #include <abstractions/base>
+
+          capability setuid,
+          capability setgid,
+
+          /usr/sbin/omiagent mr,
+          /etc/opt/omi/** r,
+          /var/opt/omi/** rw,
+        mode: complain
+        role_name: "omi_test"
+        state: present
+
+    # =========================================================================
+    # Test 3: Inline fragment WITH wrapper (should extract content)
+    # =========================================================================
+    - name: Add inline_wrapped AppArmor fragment (inline, WITH wrapper).
+      exo.apparmor.apparmor_profile:
+        name: "usr.bin.inline_wrapped"
+        fragment: |
+          #include <tunables/global>
+
+          /usr/bin/inline_wrapped {
+            #include <abstractions/base>
+
+            capability dac_read_search,
+
+            /usr/bin/inline_wrapped mr,
+            /etc/inline_wrapped/** r,
+            /var/log/inline_wrapped/** w,
+          }
+        mode: enforce
+        role_name: "inline_wrapped_test"
+        state: present
+
+    # =========================================================================
+    # Test 4: Fragment from file using fragment_src (without wrapper)
+    # =========================================================================
+    - name: Add test_app AppArmor fragment (from file, without wrapper).
+      exo.apparmor.apparmor_profile:
+        name: "usr.bin.test_app"
+        fragment_src: "apparmor/usr.bin.test_app.rules"
+        mode: enforce
+        role_name: "test_app"
+        state: present
+
+    # =========================================================================
+    # Test 4: Fragment from file WITH wrapper (should extract content)
+    # =========================================================================
+    - name: Add wrapped_app AppArmor fragment (from file, WITH wrapper).
+      exo.apparmor.apparmor_profile:
+        name: "usr.bin.wrapped_app"
+        fragment_src: "apparmor/usr.bin.wrapped_app.rules"
+        mode: enforce
+        role_name: "wrapped_app"
+        state: present
+
+    # Run the AppArmor merge role
+    - name: Include apparmor_profiles role.
+      ansible.builtin.include_role:
+        name: apparmor_profiles

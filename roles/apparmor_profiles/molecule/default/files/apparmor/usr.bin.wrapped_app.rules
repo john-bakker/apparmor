@@ -1,0 +1,14 @@
+# Test fragment WITH wrapper
+# This tests that the role correctly extracts rules from a wrapped fragment
+
+#include <tunables/global>
+
+/usr/bin/wrapped_app {
+  #include <abstractions/base>
+
+  capability net_bind_service,
+
+  /usr/bin/wrapped_app mr,
+  /etc/wrapped_app/** r,
+  /var/log/wrapped_app/** w,
+}

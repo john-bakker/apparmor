@@ -1,0 +1,31 @@
+---
+# Minimal prepare - the role itself handles AppArmor installation and service management
+- name: Prepare.
+  hosts: all
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Ensure /tmp/.ansible directory exists.
+      ansible.builtin.file:
+        path: /tmp/.ansible
+        state: directory
+        mode: '0755'
+
+    - name: Gather facts after directory setup.
+      ansible.builtin.setup:
+
+    - name: Update apt cache (Debian).
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_os_family == 'Debian'
+
+    - name: Ensure securityfs is mounted for AppArmor.
+      ansible.posix.mount:
+        path: /sys/kernel/security
+        src: securityfs
+        fstype: securityfs
+        state: mounted
+        fstab: /tmp/fstab  # Use temp fstab for container
+      failed_when: false

@@ -1,0 +1,10 @@
+# Test fragment for fragment_src functionality
+# This file tests loading AppArmor rules from a file
+
+capability dac_override,
+capability chown,
+
+/usr/bin/test_app mr,
+/etc/test_app/** r,
+/var/log/test_app/** w,
+/var/run/test_app.pid w,

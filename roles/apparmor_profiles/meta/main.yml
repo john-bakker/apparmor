@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  role_name: apparmor_profiles
+  author: John Bakker
+  description: Ansible role for managing AppArmor profile fragments by collecting, merging, and loading profiles from multiple roles
+  license: MIT
+  min_ansible_version: "2.12"
+  platforms:
+    - name: Debian
+      versions:
+        - bullseye
+        - bookworm
+  galaxy_tags:
+    - apparmor
+    - security
+    - system
+    - profiles
+
+dependencies: []

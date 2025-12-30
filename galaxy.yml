@@ -5,12 +5,15 @@ version: 1.0.0
 readme: README.md
 
 authors:
-  - Enexis OT Team
+  - John Bakker
 
 description: >-
-  Ansible collection providing AppArmor utilities and modules.
-  This collection contains custom modules for managing AppArmor profiles
-  in a modular and reusable way.
+  Ansible collection providing AppArmor utilities, modules, and roles.
+  This collection contains custom modules and a role for managing AppArmor profiles
+  in a modular and reusable way, including fragment collection, merging, and loading.
+
+license:
+  - MIT
 
 tags:
   - apparmor
@@ -18,6 +21,8 @@ tags:
   - linux
   - system
   - hardening
+
+repository: https://github.com/john-bakker/apparmor
 
 dependencies: {}
 

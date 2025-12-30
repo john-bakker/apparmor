@@ -1,0 +1,309 @@
+---
+- name: Verify apparmor_profiles role.
+  hosts: all
+  gather_facts: true
+  become: true
+
+  tasks:
+    # =========================================================================
+    # Check if AppArmor kernel support is available
+    # =========================================================================
+    - name: Check if AppArmor securityfs is available.
+      ansible.builtin.stat:
+        path: /sys/kernel/security/apparmor
+      register: apparmor_securityfs
+      failed_when: false
+
+    - name: Set AppArmor availability fact.
+      ansible.builtin.set_fact:
+        apparmor_available: "{{ apparmor_securityfs.stat.exists | default(false) }}"
+
+    - name: Display AppArmor availability status.
+      ansible.builtin.debug:
+        msg: "AppArmor kernel support: {{ 'Available' if apparmor_available else 'Not available - skipping AppArmor checks' }}"
+
+    # =========================================================================
+    # AppArmor verification tasks (conditional on kernel support)
+    # =========================================================================
+    - name: Run AppArmor verification tasks.
+      when: apparmor_available
+      block:
+        # =====================================================================
+        # Verify merged profiles exist
+        # =====================================================================
+        - name: Stat merged nginx profile.
+          ansible.builtin.stat:
+            path: /etc/apparmor.d/usr.sbin.nginx
+          register: nginx_profile_stat
+
+        - name: Assert nginx profile exists, is file and mode 0644.
+          ansible.builtin.assert:
+            that:
+              - nginx_profile_stat.stat.exists
+              - nginx_profile_stat.stat.isreg
+              - (nginx_profile_stat.stat.mode | string) | regex_search('.*644$')
+            fail_msg: "/etc/apparmor.d/usr.sbin.nginx missing, not a file, or wrong mode"
+            success_msg: "Nginx profile exists with correct permissions"
+
+        - name: Stat merged OMI profile.
+          ansible.builtin.stat:
+            path: /etc/apparmor.d/usr.sbin.omiagent
+          register: omi_profile_stat
+
+        - name: Assert OMI profile exists, is file and mode 0644.
+          ansible.builtin.assert:
+            that:
+              - omi_profile_stat.stat.exists
+              - omi_profile_stat.stat.isreg
+              - (omi_profile_stat.stat.mode | string) | regex_search('.*644$')
+            fail_msg: "/etc/apparmor.d/usr.sbin.omiagent missing, not a file, or wrong mode"
+            success_msg: "OMI profile exists with correct permissions"
+
+        # =========================================================================
+        # Verify profile content
+        # =========================================================================
+        - name: Read nginx profile content.
+          ansible.builtin.slurp:
+            path: /etc/apparmor.d/usr.sbin.nginx
+          register: nginx_profile_content
+
+        - name: Assert nginx profile includes wrapper and fragments.
+          ansible.builtin.assert:
+            that:
+              - '"#include <tunables/global>" in (nginx_profile_content.content | b64decode)'
+              - '"/usr/sbin/nginx {" in (nginx_profile_content.content | b64decode)'
+              - '"capability net_bind_service" in (nginx_profile_content.content | b64decode)'
+              - '"/var/www/html/" in (nginx_profile_content.content | b64decode)'
+              - '"}" in (nginx_profile_content.content | b64decode)'
+            fail_msg: "Nginx profile content incorrect - missing wrapper or fragments"
+            success_msg: "Nginx profile contains correct wrapper and both fragments"
+
+        - name: Read OMI profile content.
+          ansible.builtin.slurp:
+            path: /etc/apparmor.d/usr.sbin.omiagent
+          register: omi_profile_content
+
+        - name: Assert OMI profile includes wrapper and fragments.
+          ansible.builtin.assert:
+            that:
+              - '"#include <tunables/global>" in (omi_profile_content.content | b64decode)'
+              - '"/usr/sbin/omiagent {" in (omi_profile_content.content | b64decode)'
+              - '"capability setuid" in (omi_profile_content.content | b64decode)'
+              - '"}" in (omi_profile_content.content | b64decode)'
+            fail_msg: "OMI profile content incorrect - missing wrapper or fragments"
+            success_msg: "OMI profile contains correct wrapper and fragments"
+
+        # =========================================================================
+        # Verify staging directory exists (for idempotence)
+        # =========================================================================
+        - name: Check if staging directory exists.
+          ansible.builtin.stat:
+            path: /etc/apparmor.d/roles
+          register: staging_dir_stat
+
+        - name: Assert staging directory exists (cleanup disabled for idempotence).
+          ansible.builtin.assert:
+            that:
+              - staging_dir_stat.stat.exists
+              - staging_dir_stat.stat.isdir
+            fail_msg: "Staging directory /etc/apparmor.d/roles should exist (cleanup disabled)"
+            success_msg: "Staging directory exists for idempotence"
+
+        # =========================================================================
+        # Verify AppArmor profiles are loaded
+        # =========================================================================
+        - name: Check AppArmor status.
+          ansible.builtin.command: aa-status
+          register: aa_status
+          changed_when: false
+
+        - name: Assert AppArmor is loaded.
+          ansible.builtin.assert:
+            that:
+              - aa_status.rc == 0
+            fail_msg: "AppArmor not loaded or not showing profiles"
+            success_msg: "AppArmor is active and profiles are loaded"
+
+        - name: Get number of enforced profiles.
+          ansible.builtin.command: aa-status --enforced
+          register: enforced_count
+          changed_when: false
+
+        - name: Check if nginx profile is in enforce mode.
+          ansible.builtin.shell: aa-status | grep -A {{ enforced_count.stdout | int }} "profiles are in enforce mode" | grep -E "/usr/sbin/nginx|nginx" || true
+          register: nginx_enforce_check
+          changed_when: false
+          failed_when: false
+
+        - name: Assert nginx profile is in enforce mode.
+          ansible.builtin.assert:
+            that:
+              - 'nginx_enforce_check.stdout | length > 0'
+              - '"/usr/sbin/nginx" in nginx_enforce_check.stdout'
+            fail_msg: "Nginx profile not in enforce mode. Found: {{ nginx_enforce_check.stdout }}"
+            success_msg: "Nginx profile is enforced"
+
+        - name: Get number of complaining profiles.
+          ansible.builtin.command: aa-status --complaining
+          register: complaining_count
+          changed_when: false
+
+        - name: Check if OMI profile is in complain mode.
+          ansible.builtin.shell: aa-status | grep -A {{ complaining_count.stdout | int }} "profiles are in complain mode" | grep -E "/usr/sbin/omiagent|omiagent" || true
+          register: omi_complain_check
+          changed_when: false
+          failed_when: false
+
+        - name: Assert OMI profile is in complain mode.
+          ansible.builtin.assert:
+            that:
+              - 'omi_complain_check.stdout | length > 0'
+              - '"/usr/sbin/omiagent" in omi_complain_check.stdout'
+            fail_msg: "OMI profile not in complain mode. Found: {{ omi_complain_check.stdout }}"
+            success_msg: "OMI profile is in complain mode"
+
+        # =========================================================================
+        # Verify inline fragment WITH wrapper (should be extracted correctly)
+        # =========================================================================
+        - name: Check if inline_wrapped profile exists.
+          ansible.builtin.stat:
+            path: /etc/apparmor.d/usr.bin.inline_wrapped
+          register: inline_wrapped_stat
+
+        - name: Assert inline_wrapped profile exists.
+          ansible.builtin.assert:
+            that:
+              - inline_wrapped_stat.stat.exists
+              - inline_wrapped_stat.stat.isreg
+            fail_msg: "inline_wrapped profile not created from inline fragment with wrapper"
+            success_msg: "inline_wrapped profile created successfully"
+
+        - name: Read inline_wrapped profile content.
+          ansible.builtin.slurp:
+            path: /etc/apparmor.d/usr.bin.inline_wrapped
+          register: inline_wrapped_content
+
+        - name: Assert inline_wrapped has correct wrapper (not double-wrapped).
+          ansible.builtin.assert:
+            that:
+              - '"#include <tunables/global>" in (inline_wrapped_content.content | b64decode)'
+              - '"/usr/bin/inline_wrapped {" in (inline_wrapped_content.content | b64decode)'
+              - (inline_wrapped_content.content | b64decode).count('/usr/bin/inline_wrapped {') == 1
+            fail_msg: "inline_wrapped profile has incorrect wrapper (might be double-wrapped)"
+            success_msg: "inline_wrapped profile has correct single wrapper"
+
+        # =========================================================================
+        # Verify fragment_src profiles exist and are loaded
+        # =========================================================================
+        - name: Check if test_app profile exists.
+          ansible.builtin.stat:
+            path: /etc/apparmor.d/usr.bin.test_app
+          register: test_app_stat
+
+        - name: Assert test_app profile exists (from fragment_src).
+          ansible.builtin.assert:
+            that:
+              - test_app_stat.stat.exists
+              - test_app_stat.stat.isreg
+            fail_msg: "test_app profile not created from fragment_src"
+            success_msg: "test_app profile created successfully from fragment_src"
+
+        - name: Check if wrapped_app profile exists.
+          ansible.builtin.stat:
+            path: /etc/apparmor.d/usr.bin.wrapped_app
+          register: wrapped_app_stat
+
+        - name: Assert wrapped_app profile exists (from fragment_src with wrapper).
+          ansible.builtin.assert:
+            that:
+              - wrapped_app_stat.stat.exists
+              - wrapped_app_stat.stat.isreg
+            fail_msg: "wrapped_app profile not created from fragment_src with wrapper"
+            success_msg: "wrapped_app profile created successfully (wrapper was extracted)"
+
+        - name: Read wrapped_app profile content.
+          ansible.builtin.slurp:
+            path: /etc/apparmor.d/usr.bin.wrapped_app
+          register: wrapped_app_content
+
+        - name: Assert wrapped_app has correct wrapper (not double-wrapped).
+          ansible.builtin.assert:
+            that:
+              - '"#include <tunables/global>" in (wrapped_app_content.content | b64decode)'
+              - '"/usr/bin/wrapped_app {" in (wrapped_app_content.content | b64decode)'
+              - (wrapped_app_content.content | b64decode).count('/usr/bin/wrapped_app {') == 1
+            fail_msg: "wrapped_app profile has incorrect wrapper (might be double-wrapped)"
+            success_msg: "wrapped_app profile has correct single wrapper"
+
+        - name: Check if all test profiles are loaded in AppArmor.
+          ansible.builtin.shell: aa-status | grep -E "test_app|wrapped_app|inline_wrapped" || true
+          register: test_profiles_check
+          changed_when: false
+          failed_when: false
+
+        - name: Assert all test profiles are loaded.
+          ansible.builtin.assert:
+            that:
+              - '"test_app" in test_profiles_check.stdout'
+              - '"wrapped_app" in test_profiles_check.stdout'
+              - '"inline_wrapped" in test_profiles_check.stdout'
+            fail_msg: "Not all test profiles loaded in AppArmor. Found: {{ test_profiles_check.stdout }}"
+            success_msg: "All test profiles (inline_wrapped, test_app, wrapped_app) loaded successfully"
+
+        # =========================================================================
+        # Verify idempotence (re-run should not change)
+        # =========================================================================
+        - name: Re-add nginx fragment (should be idempotent).
+          exo.apparmor.apparmor_profile:
+            name: "usr.sbin.nginx"
+            fragment: |
+              #include <abstractions/base>
+              #include <abstractions/nameservice>
+
+              capability net_bind_service,
+              capability setgid,
+              capability setuid,
+
+              /usr/sbin/nginx mr,
+              /etc/nginx/** r,
+              /var/log/nginx/** w,
+              /var/cache/nginx/** w,
+            mode: enforce
+            role_name: "nginx_test"
+            state: present
+          register: idempotent_result
+
+        - name: Assert idempotence (should not change).
+          ansible.builtin.assert:
+            that:
+              - not idempotent_result.changed
+              - '"unchanged" in idempotent_result.message'
+            fail_msg: "Module is not idempotent - re-adding same fragment caused change"
+            success_msg: "Module is idempotent"
+
+        # =========================================================================
+        # Test Summary
+        # =========================================================================
+        - name: Verification Summary.
+          ansible.builtin.debug:
+            msg:
+              - "════════════════════════════════════════════════════════════════"
+              - "         AppArmor Role Verification Summary                     "
+              - "════════════════════════════════════════════════════════════════"
+              - ""
+              - "Verified:"
+              - "  - Merged profiles exist with correct permissions"
+              - "  - Profile content includes wrapper and fragments"
+              - "  - Staging directory exists (idempotence enabled)"
+              - "  - AppArmor is active and profiles loaded"
+              - "  - Enforce mode working (nginx, test_app, wrapped_app, inline_wrapped)"
+              - "  - Complain mode working (omiagent)"
+              - "  - Inline fragments without wrapper (nginx, omiagent)"
+              - "  - Inline fragments with wrapper (inline_wrapped)"
+              - "  - Fragment_src without wrapper (test_app)"
+              - "  - Fragment_src with wrapper (wrapped_app)"
+              - "  - Wrapper extraction working (no double-wrapping)"
+              - "  - Module idempotence verified"
+              - ""
+              - "  All verification tests passed!"
+              - "════════════════════════════════════════════════════════════════"

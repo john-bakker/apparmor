@@ -1,0 +1,9 @@
+---
+# Mock modules that are not available during linting
+mock_modules:
+  - exo.apparmor.apparmor_profile  # Custom module from exo.apparmor collection
+  - ansible.posix.mount             # From ansible.posix collection
+
+# Skip warnings for mocked modules
+warn_list:
+  - args[module]  # Mocked modules will trigger parameter warnings

@@ -1,0 +1,29 @@
+---
+# AppArmor packages to install
+apparmor_packages:
+  - apparmor
+  - apparmor-utils
+
+# AppArmor service name (varies by distribution)
+apparmor_service_name: apparmor
+
+# Whether to backup existing profiles before merging
+apparmor_backup_profiles: true
+
+# Default AppArmor mode for profiles without explicit mode header
+# Valid values: 'enforce', 'complain', 'audit', 'disabled'
+apparmor_default_mode: enforce
+
+# Whether to enable AppArmor enforcement mode
+apparmor_enforce_mode: true
+
+# Default AppArmor profile directory
+apparmor_profile_dir: /etc/apparmor.d
+
+# Staging directory for role-based profiles
+apparmor_staging_dir: /etc/apparmor.d/roles
+
+# Whether to clean up staging directory after merging
+# Set to false to keep fragments for idempotence (recommended)
+# Set to true to clean up after each merge (not recommended for production)
+apparmor_cleanup_staging: false

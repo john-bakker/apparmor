@@ -1,0 +1,179 @@
+---
+- name: Check if AppArmor kernel support is available.
+  ansible.builtin.stat:
+    path: /sys/kernel/security/apparmor
+  register: apparmor_kernel_support
+
+- name: Display AppArmor availability status.
+  ansible.builtin.debug:
+    msg: "AppArmor kernel support: {{ 'Available' if apparmor_kernel_support.stat.exists else 'Not available - profiles will be generated but not loaded' }}"
+
+- name: Ensure AppArmor packages are installed.
+  ansible.builtin.package:
+    name: "{{ apparmor_packages }}"
+    state: present
+
+- name: Ensure AppArmor staging directory exists.
+  ansible.builtin.file:
+    path: "{{ apparmor_staging_dir }}"
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Ensure AppArmor profiles directory exists.
+  ansible.builtin.file:
+    path: "{{ apparmor_profile_dir }}"
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Find all AppArmor profile directories.
+  ansible.builtin.find:
+    paths: "{{ apparmor_staging_dir }}"
+    patterns: "*"
+    file_type: directory
+  register: profile_directories
+
+- name: Process and merge all role-based AppArmor profiles.
+  block:
+    - name: Find all fragments for each profile.
+      ansible.builtin.find:
+        paths: "{{ item.path }}"
+        patterns: "*.fragment"
+        file_type: file
+      register: profile_fragments
+      loop: "{{ profile_directories.files }}"
+      when: profile_directories.matched > 0
+
+    - name: Read all fragment contents.
+      ansible.builtin.slurp:
+        src: "{{ item.1.path }}"
+      register: fragment_contents
+      loop: "{{ profile_fragments.results | subelements('files', skip_missing=True) }}"
+      when: profile_fragments is defined
+
+    - name: Build merged profiles with modes.
+      ansible.builtin.set_fact:
+        merged_profile_data: "{{ merged_profile_data | default({}) | combine({profile_name: {'rules': rules, 'mode': mode, 'sorted_fragments': sorted_fragments}}, recursive=True) }}"
+      vars:
+        profile_name: "{{ item.item.0.item.path | basename }}"
+        fragment_content: "{{ item.content | b64decode }}"
+        mode: "{{ fragment_content.split('\n')[0] | regex_replace('^# Mode: ', '') if fragment_content.startswith('# Mode:') else apparmor_default_mode }}"
+        fragment_body: "{{ fragment_content | regex_replace('^# Mode: [a-z]+\\n', '') }}"
+        fragment_file: "{{ item.item.1.path | basename }}"
+        # Extract rules from fragment (if it has wrapper, extract content between { }, otherwise use as-is)
+        extracted_rules: "{{ fragment_body | regex_replace('(?s)^.*?\\{\\s*(.*)\\s*\\}\\s*$', '\\1') if (fragment_body | regex_search('/[a-zA-Z0-9/_.-]+\\s*\\{')) else fragment_body }}"
+        # Build rules list with fragment filenames for sorting
+        rules: "{{ (merged_profile_data[profile_name]['rules'] | default([])) + [extracted_rules] }}"
+        # Keep track of fragment files for consistent ordering
+        sorted_fragments: "{{ ((merged_profile_data[profile_name]['sorted_fragments'] | default([])) + [fragment_file]) | sort }}"
+      loop: "{{ fragment_contents.results }}"
+      when: fragment_contents is defined
+
+    - name: Generate merged profile content with sorted fragments.
+      ansible.builtin.set_fact:
+        profile_contents: "{{ profile_contents | default({}) | combine({item.key: profile_content | trim}) }}"
+      vars:
+        # Sort rules by their original fragment filename for consistency
+        sorted_rules: "{{ item.value.rules }}"
+        profile_content: |
+          #include <tunables/global>
+
+          /{{ item.key | replace('.', '/') }} {
+          {% for rule in sorted_rules %}
+          {{ rule | trim | indent(2, first=True) }}
+          {% if not loop.last %}
+
+          {% endif %}
+          {% endfor %}
+          }
+      loop: "{{ merged_profile_data | dict2items }}"
+      when: merged_profile_data is defined
+
+    - name: Check if profile files already exist and read content.
+      ansible.builtin.slurp:
+        src: "{{ apparmor_profile_dir }}/{{ item.key }}"
+      loop: "{{ merged_profile_data | dict2items }}"
+      when: merged_profile_data is defined
+      register: existing_profile_contents
+      failed_when: false
+
+    - name: Set backup timestamp from Ansible facts.
+      ansible.builtin.set_fact:
+        backup_timestamp: "{{ ansible_date_time.year[2:] }}{{ ansible_date_time.month }}{{ ansible_date_time.day }}{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}"
+      when: apparmor_backup_profiles
+
+    - name: Create backup of existing profiles.
+      ansible.builtin.copy:
+        src: "{{ apparmor_profile_dir }}/{{ item.key }}"
+        dest: "{{ apparmor_profile_dir }}/{{ item.key }}.{{ backup_timestamp }}"
+        mode: '0644'
+        owner: root
+        group: root
+        remote_src: true
+      loop: "{{ merged_profile_data | dict2items }}"
+      when:
+        - apparmor_backup_profiles
+        - merged_profile_data is defined
+        - (existing_profile_contents.results | selectattr('item.key', 'equalto', item.key) | list | first).content is defined
+        - (existing_profile_contents.results | selectattr('item.key', 'equalto', item.key) | list | first).content | b64decode != (profile_contents[item.key] + "\n")
+
+    - name: Write merged AppArmor profiles with wrapper.
+      ansible.builtin.copy:
+        content: "{{ profile_contents[item.key] }}\n"
+        dest: "{{ apparmor_profile_dir }}/{{ item.key }}"
+        mode: '0644'
+        owner: root
+        group: root
+        backup: false
+      loop: "{{ merged_profile_data | dict2items }}"
+      when:
+        - merged_profile_data is defined
+        - profile_contents is defined
+        - >-
+          (existing_profile_contents.results | selectattr('item.key', 'equalto', item.key) | list | first).content is not defined
+          or (existing_profile_contents.results | selectattr('item.key', 'equalto', item.key) | list | first).content | b64decode != (profile_contents[item.key] + "\n")
+      register: merged_profiles
+
+- name: Set fact for profiles that were merged.
+  ansible.builtin.set_fact:
+    apparmor_profiles_changed: "{{ merged_profiles.changed | default(false) }}"
+
+- name: Load AppArmor profiles and manage service.
+  when: apparmor_kernel_support.stat.exists
+  block:
+    - name: Set AppArmor profile modes using apparmor_parser.
+      ansible.builtin.command: "apparmor_parser -r{% if item.value.mode == 'complain' %}C{% endif %} {{ apparmor_profile_dir }}/{{ item.key }}"
+      loop: "{{ merged_profile_data | dict2items }}"
+      when:
+        - merged_profile_data is defined
+        - item.value.mode in ['enforce', 'complain']
+      register: mode_result
+      changed_when: apparmor_profiles_changed
+      failed_when:
+        - mode_result.rc != 0
+        - '"Profile doesn" not in mode_result.stderr'
+        - '"Unable to remove" not in mode_result.stderr'
+
+    - name: Reload AppArmor.
+      ansible.builtin.systemd:
+        name: "{{ apparmor_service_name }}"
+        state: reloaded
+      when: apparmor_profiles_changed
+
+    - name: Ensure AppArmor service is running and enabled.
+      ansible.builtin.systemd:
+        name: "{{ apparmor_service_name }}"
+        state: started
+        enabled: true
+
+- name: Clean up merged profiles from staging directory.
+  ansible.builtin.file:
+    path: "{{ apparmor_staging_dir }}"
+    state: absent
+  when:
+    - profile_directories.matched > 0
+    - apparmor_profiles_changed
+    - apparmor_cleanup_staging | default(false)

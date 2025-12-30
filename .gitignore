@@ -1,0 +1,35 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Collection build artifacts
+*.tar.gz
+
+# Ansible
+.ansible/
+
+# Pre-commit
+.pre-commit-config.yaml
+
+# Molecule
+.molecule/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*~
+

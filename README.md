@@ -1,6 +1,6 @@
-# Ansible Collection - exo.apparmor
+# Ansible Collection - apparmor
 
-This collection contains utilities and modules for managing AppArmor configurations.
+This collection contains utilities, modules, and roles for managing AppArmor configurations.
 
 ## Modules
 
@@ -20,7 +20,7 @@ A custom Ansible module for managing AppArmor profile fragments.
 ```yaml
 # Using a file from the role
 - name: Configure AppArmor profile from file
-  exo.apparmor.apparmor_profile:
+  apparmor_profile:
     name: usr.sbin.nginx
     fragment_src: apparmor/usr.sbin.nginx.rules
     mode: enforce
@@ -28,7 +28,7 @@ A custom Ansible module for managing AppArmor profile fragments.
 
 # Using inline content
 - name: Configure AppArmor profile inline
-  exo.apparmor.apparmor_profile:
+  apparmor_profile:
     name: usr.sbin.nginx
     fragment: |
       /var/www/html/** r,
@@ -48,6 +48,43 @@ A custom Ansible module for managing AppArmor profile fragments.
 
 Note: Use either `fragment_src` or `fragment`, not both. Files specified in `fragment_src` support Jinja2 templating.
 
+## Roles
+
+### apparmor_profiles
+
+A role for managing AppArmor profile fragments by collecting, merging, and loading profiles from multiple roles.
+
+#### Features
+
+- Installs AppArmor packages
+- Collects and merges AppArmor profile fragments from all roles
+- Loads merged profiles into AppArmor
+- Reloads AppArmor service after changes
+- Ensures AppArmor service is running
+
+#### Usage
+
+```yaml
+- name: Merge and load AppArmor profiles
+  hosts: all
+  collections:
+    - apparmor
+  roles:
+    - apparmor_profiles
+```
+
+Or using the fully qualified collection name:
+
+```yaml
+- name: Merge and load AppArmor profiles
+  ansible.builtin.import_role:
+    name: apparmor.apparmor_profiles
+```
+
+#### Role Variables
+
+See the [role README](roles/apparmor_profiles/README.md) for detailed variable documentation.
+
 ## Installation
 
 Add the collection to your `requirements.yml`:
@@ -55,9 +92,9 @@ Add the collection to your `requirements.yml`:
 ```yaml
 ---
 collections:
-  - name: exo.apparmor
+  - name: apparmor
     type: file
-    source: ./ansible_collections/exo/apparmor
+    source: ./ansible_collections/apparmor
 ```
 
 Or for Git installation:
@@ -65,12 +102,12 @@ Or for Git installation:
 ```yaml
 ---
 collections:
-  - name: exo.apparmor
+  - name: apparmor
     type: git
-    source: https://gitlab.com/enexis/exo-ansible-collections/apparmor.git
+    source: https://github.com/john-bakker/apparmor.git
     version: main
 ```
 
 ## Author
 
-Enexis Team
+John Bakker
